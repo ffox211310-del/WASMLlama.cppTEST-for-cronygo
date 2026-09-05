@@ -22,38 +22,146 @@
   font-family: "Optimistic Mono", ui-monospace, monospace;
 }
 </style>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Serow WASM Test - Minimal</title>
-  <style>
-    body { font-family: system-ui, sans-serif; max-width: 700px; margin: 40px auto; padding: 0 16px; background: #111; color: #eee; }
-    h1 { font-size: 20px; }
-    #output { white-space: pre-wrap; background: #222; padding: 12px; border-radius: 8px; min-height: 120px; margin-top: 16px; }
-    input, button { padding: 10px; font-size: 16px; border-radius: 8px; border: 0; }
-    input { width: 70%; background: #222; color: #fff; }
-    button { background: #4FD1C5; color: #000; font-weight: bold; margin-left: 8px; cursor: pointer; }
-    #log { font-size: 12px; color: #0f8; font-family: monospace; margin-top: 12px; white-space: pre-wrap; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>CronyGO - Serow対応</title>
+<meta name="theme-color" content="#111">
+<link rel="manifest" href="./manifest.json">
+<style>
+:root { --bg:#0f0f0f; --bg2:#1a1a1a; --bg3:#222; --fg:#eee; --sub:#888; --accent:#4FD1C5; --danger:#ff3b3b; }
+* { box-sizing:border-box; }
+body { margin:0; font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--fg); display:flex; flex-direction:column; height:100dvh; overflow:hidden; }
+body.light { --bg:#f6f6f6; --bg2:#fff; --bg3:#eee; --fg:#111; --sub:#666; }
+header { display:flex; align-items:center; gap:8px; padding:10px 12px; background: var(--bg2); border-bottom:1px solid #333; flex-shrink:0; }
+#model-select { flex:1; padding:8px 10px; border-radius:10px; background: var(--bg3); color: var(--fg); border:1px solid #333; font-size:14px; }
+#download-btn { padding:8px 14px; border-radius:20px; border:0; background: var(--accent); color:#000; font-weight:700; font-size:13px; cursor:pointer; }
+#download-btn.ready { background:#555; color:#fff; }
+#status { font-size:11px; color: var(--sub); min-width:70px; text-align:right; }
+#status.ready { color: var(--accent); }
+#status.loading { color: #ffcc00; }
+#settings-btn { width:36px; height:36px; border-radius:50%; border:0; background: var(--bg3); color: var(--fg); cursor:pointer; }
+#progress-bar { position:fixed; top:0; left:0; height:3px; background: var(--accent); width:0%; transition: width 0.2s; opacity:0; z-index:9999; }
+
+#chat { flex:1; overflow:auto; padding:16px 12px; display:flex; flex-direction:column; gap:12px; }
+#chat.is-first-loading { opacity:0.3; }
+.msg { max-width:85%; padding:10px 14px; border-radius:18px; line-height:1.6; font-size:15px; word-break:break-word; }
+.msg.user { align-self:flex-end; background: var(--accent); color:#000; border-bottom-right-radius:4px; }
+.msg.assistant { align-self:flex-start; background: var(--bg3); border-bottom-left-radius:4px; }
+.msg.system { align-self:center; font-size:12px; color: var(--sub); background: transparent; }
+
+#loading-view { position:fixed; inset:0; background: rgba(0,0,0,0.85); display:none; flex-direction:column; align-items:center; justify-content:center; z-index:5000; }
+#loading-view.show { display:flex; }
+#loading-text { font-size:18px; font-weight:700; margin-top:16px; }
+.loader { width:48px; height:48px; border:4px solid #333; border-top-color: var(--accent); border-radius:50%; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform:rotate(360deg); } }
+
+#input-area { display:flex; flex-direction:column; gap:6px; padding:10px 12px 14px; background: var(--bg2); border-top:1px solid #333; flex-shrink:0; }
+#voice-preview { font-size:12px; color: var(--accent); min-height:18px; }
+.input-row { display:flex; gap:8px; align-items:flex-end; }
+#input { flex:1; resize:none; max-height:120px; padding:12px 14px; border-radius:22px; border:1px solid #333; background: var(--bg3); color: var(--fg); font-size:16px; outline:none; }
+#mic-btn, #send { width:44px; height:44px; border-radius:50%; border:0; cursor:pointer; flex-shrink:0; display:grid; place-items:center; font-size:20px; }
+#mic-btn { background: var(--bg3); color: var(--fg); }
+#mic-btn.on { background: var(--danger); color:#fff; animation: pulse 1.2s infinite; }
+#send { background: var(--accent); color:#000; }
+@keyframes pulse { 0%{transform:scale(1)} 50%{transform:scale(1.1)} 100%{transform:scale(1)} }
+
+/* settings */
+#settings-overlay { position:fixed; inset:0; background: rgba(0,0,0,0.5); display:none; z-index:6000; }
+#settings-overlay.show { display:block; }
+#settings-panel { position:fixed; top:0; right:-100%; width:90%; max-width:380px; height:100%; background: var(--bg2); z-index:7000; transition:right 0.25s; padding:20px; overflow:auto; display:flex; flex-direction:column; gap:16px; }
+#settings-panel.show { right:0; }
+#settings-close { align-self:flex-end; border:0; background: var(--bg3); color: var(--fg); width:32px; height:32px; border-radius:50%; cursor:pointer; }
+#system-prompt-input { width:100%; min-height:120px; padding:10px; border-radius:10px; border:1px solid #333; background: var(--bg3); color: var(--fg); font-size:13px; }
+.theme-opt { padding:8px 12px; border-radius:8px; border:1px solid #333; background: var(--bg3); color: var(--fg); cursor:pointer; }
+.theme-opt.active { border-color: var(--accent); }
+#save-prompt-btn, #reset-prompt-btn { padding:8px 14px; border-radius:8px; border:0; cursor:pointer; font-weight:600; }
+#save-prompt-btn { background: var(--accent); color:#000; }
+#reset-prompt-btn { background: #333; color:#fff; }
+#prompt-status { font-size:12px; min-height:16px; }
+
+/* kill switch */
+.kill-switch { animation: fadeIn 0.2s; }
+@keyframes fadeIn { from{opacity:0} to{opacity:1} }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "@mlc-ai/web-llm": "https://esm.sh/@mlc-ai/web-llm@0.2.79?bundle",
+    "@wllama/wllama": "https://esm.sh/@wllama/wllama@2.3.11?bundle"
+  }
+}
+</script>
 </head>
 <body>
-  <h1>Serow-0.5B WASM Llama Test (最小構成)</h1>
-  <p>このページはWASM版llama.cpp (wllama) がSerowのGGUFをブラウザで読めるかを検証するための最小リポジトリです。</p>
-  
-  <div>
-    <input id="prompt" value="こんにちは、Serow。自己紹介して">
-    <button id="run">生成</button>
-    <button id="stop">停止</button>
+<div id="progress-bar"></div>
+
+<header>
+  <select id="model-select">
+    <option>読み込み中...</option>
+  </select>
+  <span id="status">未DL</span>
+  <button id="download-btn">読込</button>
+  <button id="settings-btn">⚙️</button>
+</header>
+
+<div id="chat"></div>
+
+<div id="loading-view">
+  <div class="loader"></div>
+  <div id="loading-text">準備中...</div>
+  <div style="font-size:12px; color:#888; margin-top:8px;">初回は380MBダウンロード。Wi-Fi推奨。</div>
+</div>
+
+<div id="input-area">
+  <div id="voice-preview"></div>
+  <div class="input-row">
+    <button id="mic-btn">🎤</button>
+    <textarea id="input" rows="1" placeholder="モデルを選択してください..."></textarea>
+    <button id="send">➤</button>
   </div>
-  <div id="log"></div>
-  <pre id="output">モデル未ロード。Runを押すと自動でロードします。</pre>
+</div>
 
-  <h3>使い方</h3>
-  <ol>
-    <li>このフォルダを <code>npx serve .</code> か <code>python -m http.server 8000</code> でホストする（file://ではWASMが動かない）</li>
-    <li><code>models/Serow-0.5B.Q4_K_M.gguf</code> に380MのGGUFを置く。または main.js の MODEL_URL をHFの公開URLに変える</li>
-    <li>スマホのChromeで開いてRunを押す。爆速で喋れば成功</li>
-  </ol>
+<!-- settings -->
+<div id="settings-overlay"></div>
+<div id="settings-panel">
+  <button id="settings-close">✕</button>
+  <h3 style="margin:0;">CronyGO設定</h3>
+  
+  <label style="font-size:13px; font-weight:600;">System Prompt</label>
+  <textarea id="system-prompt-input"></textarea>
+  <div style="display:flex; gap:8px;">
+    <button id="save-prompt-btn">保存</button>
+    <button id="reset-prompt-btn">リセット</button>
+  </div>
+  <div id="prompt-status"></div>
 
-  <script type="module" src="./main.js"></script>
+  <label style="font-size:13px; font-weight:600;">テーマ</label>
+  <div style="display:flex; gap:8px;">
+    <button class="theme-opt" data-theme="dark">ダーク</button>
+    <button class="theme-opt" data-theme="light">ライト</button>
+  </div>
+
+  <label style="font-size:13px; font-weight:600;">開発者コンソール</label>
+  <div style="display:flex; align-items:center; gap:10px;">
+    <div id="dev-toggle-bg" style="width:44px; height:26px; background:#333; border-radius:13px; position:relative; cursor:pointer;">
+      <div id="dev-toggle-dot" style="width:22px; height:22px; background:#fff; border-radius:50%; position:absolute; top:2px; left:2px; transition:transform 0.2s;"></div>
+    </div>
+    <span id="dev-console-label" style="font-size:12px; color:#888;">OFF</span>
+    <input type="checkbox" id="dev-console-toggle" style="display:none;">
+  </div>
+
+  <div style="font-size:11px; color:#666; margin-top:20px; line-height:1.5;">
+    <b>Serow-0.5Bの使い方</b><br>
+    1. モデル選択で「📁 手持ちのGGUFを選択」を選ぶ<br>
+    2. ダウンロードを押すとファイル選択が出る<br>
+    3. 端末の Serow-0.5B.Q4_K_M.gguf (380M) を選択<br>
+    4. WASMで爆速で動き出します。<br><br>
+    公開したい場合は public/models/ に置くか、HFにアップロードしてURLを app.js に書いてください。
+  </div>
+</div>
+
+<input type="file" id="gguf-file-input" accept=".gguf" style="display:none;">
+
+<script type="module" src="./app.js"></script>
 <script>(function(){var loc=location.href.replace(/#.*$/,"");var ATTR_NAMES=["data-product-id","data-productid","data-product_id","product-id","productid","product_id","data-source-entity-id","source-entity-id","source_entity_id","data-product","data-metadata","data-meta"];var DATASET_KEYS=["productId","productid","product_id","sourceEntityId","sourceentityid","source_entity_id","product","metadata","meta"];function readProductId(value){if(typeof value!=="string"||value.length===0)return null;if(/^[0-9]{6,}$/.test(value))return value;var match=value.match(/(?:product(?:_|-)?id|source(?:_|-)?entity(?:_|-)?id)["'=:\s]+([0-9]{6,})/i);return match?match[1]:null}function extractProductId(start){for(var node=start;node&&node!==document.body;node=node.parentElement){for(var i=0;i<ATTR_NAMES.length;i++){var attrValue=node.getAttribute&&node.getAttribute(ATTR_NAMES[i]);var attrProductId=readProductId(attrValue);if(attrProductId)return attrProductId}var dataset=node.dataset||null;if(dataset){for(var j=0;j<DATASET_KEYS.length;j++){var dataValue=dataset[DATASET_KEYS[j]];var dataProductId=readProductId(dataValue);if(dataProductId)return dataProductId}}}return null}function isInlineMediaSlotElement(node){return !!(node&&node.getAttribute&&node.getAttribute("data-clippy-inline-media-slot")!==null)}function findInlineMediaSlot(start){for(var node=start;node&&node!==document.body;node=node.parentElement){if(isInlineMediaSlotElement(node))return node}return null}function readInlineMediaUrl(node){if(!node)return null;return node.getAttribute&&((node.getAttribute("data-clippy-inline-media-url")||node.getAttribute("data-url")||node.getAttribute("data_url")))||node.href||null}function stripHash(url){return String(url).replace(/#.*$/,"")}function urlsMatch(a,b){if(!a||!b)return false;try{return stripHash(new URL(a,loc).href)===stripHash(new URL(b,loc).href)}catch(_){return stripHash(a)===stripHash(b)}}function isFirstPartyReelUrl(value){try{var url=new URL(value,loc);if(url.protocol!=="https:")return false;var host=url.hostname.toLowerCase();var supported=host==="instagram.com"||host.endsWith(".instagram.com")||host==="facebook.com"||host.endsWith(".facebook.com");return supported&&/\/reels?\//i.test(url.pathname)}catch(_){return false}}function isInlineMediaUrlClick(node,href){var slot=findInlineMediaSlot(node);if(!slot)return false;var slotUrl=readInlineMediaUrl(slot);if(slotUrl)return urlsMatch(href,slotUrl);return isFirstPartyReelUrl(href)}function findDataHref(start){for(var node=start;node&&node!==document.body;node=node.parentElement){if(node.getAttribute){var href=node.getAttribute("data-href")||node.getAttribute("data-url");if(href)return{href:href,node:node}}}return null}var nativeOpen=window.open;window.open=function(url){if(parent!==window&&typeof url==="string"&&/^https?:\/\//.test(url)){parent.postMessage({type:"ecto:usercontent-link-click",href:url},"*");return null}return nativeOpen?nativeOpen.apply(window,arguments):null};document.addEventListener("click",function(e){var target=e.target instanceof Element?e.target:null;if(!target)return;if(parent===window)return;var a=target.closest?target.closest("a[href]"):null;if(a&&a.href&&/^https?:\/\//.test(a.href)&&a.href.replace(/#.*$/,"")!==loc){if(isInlineMediaUrlClick(a,a.href))return;var productId=extractProductId(target)||extractProductId(a);if(productId){e.preventDefault();parent.postMessage({type:"ecto-artifact-link-click",productId:productId},"*");return}e.preventDefault();parent.postMessage({type:"ecto:usercontent-link-click",href:a.href},"*");return}var dataHref=findDataHref(target);if(dataHref&&/^https?:\/\//.test(dataHref.href)&&dataHref.href.replace(/#.*$/,"")!==loc){if(isInlineMediaUrlClick(dataHref.node,dataHref.href))return;e.preventDefault();parent.postMessage({type:"ecto:usercontent-link-click",href:dataHref.href},"*")}},true)})();</script><script>(function(){var FOCUS_TYPE="ecto:artifact-focus-request";var CLOSE_TYPE="ecto:artifact-close-request";function focusArtifactDocument(){var body=document.body;if(!body)return;try{window.focus();}catch(e){}if(!body.hasAttribute("tabindex"))body.setAttribute("tabindex","-1");try{body.focus({preventScroll:true});}catch(e){try{body.focus();}catch(e2){}}}window.addEventListener("message",function(event){if(event.source!==window.parent)return;var data=event.data;if(!data||typeof data!=="object"||data.type!==FOCUS_TYPE)return;if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",focusArtifactDocument,{once:true});return;}focusArtifactDocument();});window.addEventListener("keydown",function(event){if(event.key!=="Escape")return;window.setTimeout(function(){if(event.defaultPrevented)return;window.parent.postMessage({type:CLOSE_TYPE},"*");},0);});})();</script></body>
 </html>
