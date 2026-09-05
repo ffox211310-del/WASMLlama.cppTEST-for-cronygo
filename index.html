@@ -24,34 +24,30 @@
 </style>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Serow WASM - Step by Step</title>
+<title>Serow WASM - Fixed CDN</title>
 <style>
   body { font-family: system-ui, sans-serif; background:#0f0f0f; color:#eee; margin:0; padding:20px; max-width:720px; margin:auto; }
-  h1 { font-size:20px; }
   .card { background:#1a1a1a; border-radius:12px; padding:16px; margin:16px 0; border:1px solid #222; }
   button { width:100%; padding:14px; border-radius:10px; border:0; background:#4FD1C5; color:#000; font-weight:800; font-size:16px; cursor:pointer; margin-top:8px; }
   button:disabled { opacity:0.35; background:#333; color:#888; }
   button.secondary { background:#333; color:#fff; }
   input, textarea { width:100%; padding:12px; border-radius:10px; border:1px solid #333; background:#222; color:#fff; font-size:15px; box-sizing:border-box; margin-top:8px; }
-  #log { font-family:monospace; font-size:12px; color:#0f8; white-space:pre-wrap; max-height:260px; overflow:auto; background:#111; padding:10px; border-radius:8px; }
+  #log { font-family:monospace; font-size:12px; color:#0f8; white-space:pre-wrap; max-height:320px; overflow:auto; background:#111; padding:10px; border-radius:8px; }
   #output { white-space:pre-wrap; background:#222; padding:14px; border-radius:10px; min-height:120px; border:1px solid #333; }
-  .ok { color:#4FD1C5; } .ng { color:#ff6b6b; }
 </style>
 </head>
 <body>
-<h1>Serow WASM - ステップ検証</h1>
-<p style="color:#888; font-size:13px;">①WASMダウンロード → ②GGUF選択 → ③生成。ボタン押してログを確認。</p>
+<h1>Serow WASM - CDN修正版</h1>
+<p style="color:#888; font-size:13px;">esm.shが失敗したので jsDelivr / unpkg に切り替えて3段階フォールバックします。</p>
 
 <div class="card">
-  <b>Step 1: Llama.cpp WASMをダウンロード</b>
-  <div style="font-size:12px; color:#888;">まずはここを押す。数MBがCDNから落ちる。</div>
-  <button id="wasm-btn">① WASMをダウンロード</button>
+  <b>Step 1: WASMをダウンロード</b>
+  <button id="wasm-btn">① WASMをダウンロード (jsDelivr)</button>
   <div id="wasm-status" style="font-size:12px; color:#aaa; margin-top:6px;">未実行</div>
 </div>
 
 <div class="card">
-  <b>Step 2: SerowのGGUFを選択してロード</b>
-  <div style="font-size:12px; color:#888;">手持ちの Serow-0.5B.Q4_K_M.gguf (380MB) を選ぶ</div>
+  <b>Step 2: GGUFを選択</b>
   <input type="file" id="gguf-file" accept=".gguf" disabled>
   <div id="file-info" style="font-size:12px; color:#aaa; margin-top:6px;"></div>
   <button id="load-btn" disabled>② GGUFをロード</button>
@@ -66,9 +62,8 @@
 </div>
 
 <div class="card">
-  <b>ログ (ここを見て)</b>
+  <b>ログ</b>
   <div id="log">[待機中]\n</div>
-  <button id="clear-log" class="secondary" style="margin-top:8px; padding:8px; font-size:12px;">ログクリア</button>
 </div>
 
 <script type="module">
@@ -82,7 +77,6 @@ const stopBtn = document.getElementById('stop-btn');
 const promptEl = document.getElementById('prompt');
 const outputEl = document.getElementById('output');
 const logEl = document.getElementById('log');
-const clearLogBtn = document.getElementById('clear-log');
 
 let wllama = null;
 let selectedFile = null;
@@ -96,7 +90,25 @@ function log(msg) {
   console.log(msg);
 }
 
-clearLogBtn.addEventListener('click', () => logEl.textContent = '');
+async function tryImportWllama() {
+  const cdns = [
+    "https://cdn.jsdelivr.net/npm/@wllama/wllama@2.3.11/+esm",
+    "https://unpkg.com/@wllama/wllama@2.3.11/esm/index.js",
+    "https://esm.sh/@wllama/wllama@2.3.11?bundle"
+  ];
+  for (let i=0; i<cdns.length; i++) {
+    const url = cdns[i];
+    try {
+      log(`CDN試行 ${i+1}/${cdns.length}: ${url}`);
+      const mod = await import(url);
+      log(`✅ import成功: ${url}`);
+      return mod;
+    } catch (e) {
+      log(`❌ 失敗 ${i+1}: ${e.message}`);
+    }
+  }
+  throw new Error("全CDNでwllamaの取得に失敗しました。ネット接続かAdBlockを確認してください。");
+}
 
 wasmBtn.addEventListener('click', async () => {
   wasmBtn.disabled = true;
@@ -104,38 +116,30 @@ wasmBtn.addEventListener('click', async () => {
   wasmStatus.textContent = "CDNから取得中...";
   log("Step1: WASMダウンロード開始");
   try {
-    log("import wllama from esm.sh ...");
-    const mod = await import("https://esm.sh/@wllama/wllama@2.3.11?bundle");
+    const mod = await tryImportWllama();
     const { Wllama } = mod;
-    log("Wllama import成功");
+    log("Wllamaクラス取得成功");
 
     const config = {
       'single-thread/wllama.wasm': 'https://cdn.jsdelivr.net/npm/@wllama/wllama@2.3.11/esm/single-thread/wllama.wasm',
       'multi-thread/wllama.wasm': 'https://cdn.jsdelivr.net/npm/@wllama/wllama@2.3.11/esm/multi-thread/wllama.wasm',
     };
-    log("Wllama初期化中... config: " + JSON.stringify(config));
+    log("Wllama初期化: " + JSON.stringify(config));
     wllama = new Wllama(config);
-    
-    log("WASMバイナリ取得中... (数MB)");
-    wasmStatus.textContent = "WASMバイナリ取得中...";
+    await new Promise(r => setTimeout(r, 300));
 
-    await new Promise(r => setTimeout(r, 500));
-
-    log("✅ WASMダウンロード完了");
-    wasmStatus.textContent = "✅ WASMダウンロード完了";
-    wasmStatus.className = "ok";
-    wasmBtn.textContent = "① WASM完了 ✅";
-    
+    log("✅ WASM準備完了");
+    wasmStatus.textContent = "✅ WASM準備完了";
+    wasmBtn.textContent = "① 完了 ✅";
     fileInput.disabled = false;
-    log("Step2のファイル選択が有効になりました。GGUFを選んでください。");
+    log("GGUFファイルを選んでください。");
   } catch (e) {
-    log(`❌ WASMダウンロード失敗: ${e.message}`);
+    log(`❌ WASM失敗: ${e.message}`);
     log(e.stack || "");
     wasmStatus.textContent = `❌ 失敗: ${e.message}`;
-    wasmStatus.className = "ng";
     wasmBtn.disabled = false;
     wasmBtn.textContent = "① 再試行";
-    outputEl.textContent = `WASMダウンロードエラー:\n${e.message}\n\nネット接続を確認。\nfile://ではなく httpサーバーで開いていますか？`;
+    outputEl.textContent = `WASMエラー:\n${e.message}\n\nAdBlockをオフ、Wi-Fiに切り替え、httpサーバーで開いているか確認。`;
   }
 });
 
@@ -144,85 +148,68 @@ fileInput.addEventListener('change', e => {
   if (!f) return;
   selectedFile = f;
   fileInfo.textContent = `${f.name} - ${(f.size/1024/1024).toFixed(1)}MB`;
-  log(`ファイル選択: ${f.name} ${Math.round(f.size/1024/1024)}MB`);
+  log(`ファイル選択: ${f.name}`);
   loadBtn.disabled = false;
-  outputEl.textContent = `選択OK: ${f.name}\nロードボタンを押してください。`;
 });
 
 loadBtn.addEventListener('click', async () => {
-  if (!wllama) { alert("先にStep1のWASMダウンロードをしてください"); return; }
-  if (!selectedFile) { alert("GGUFファイルを選択してください"); return; }
+  if (!wllama) { alert("先に①を押してください"); return; }
+  if (!selectedFile) { alert("ファイルを選択してください"); return; }
   loadBtn.disabled = true;
   loadBtn.textContent = "GGUFロード中...";
-  outputEl.textContent = "GGUFロード中...\n";
   try {
     const url = URL.createObjectURL(selectedFile);
-    log(`GGUFロード開始: ${selectedFile.name}`);
+    log(`GGUFロード: ${selectedFile.name}`);
     try {
       await wllama.loadModel(url, {
         progressCallback: ({ loaded, total }) => {
-          const mb = Math.round(loaded / 1024 / 1024);
+          const mb = Math.round(loaded/1024/1024);
           if (total) {
-            const pct = Math.round(loaded / total * 100);
-            const totalMb = Math.round(total / 1024 / 1024);
-            outputEl.textContent = `Serowロード中... ${pct}% (${mb}MB / ${totalMb}MB)`;
-            if (pct % 10 === 0) log(`ロード ${pct}% ${mb}MB`);
+            const pct = Math.round(loaded/total*100);
+            outputEl.textContent = `ロード中 ${pct}% ${mb}MB`;
           } else {
-            outputEl.textContent = `Serowロード中... ${mb}MB`;
+            outputEl.textContent = `ロード中 ${mb}MB`;
           }
         }
       });
-    } finally {
-      URL.revokeObjectURL(url);
-    }
+    } finally { URL.revokeObjectURL(url); }
     modelLoaded = true;
-    log("✅ GGUFロード完了！");
-    outputEl.innerHTML = `<span class="ok">✅ Serowロード完了！</span>\nWASMでSerowが動くことが確定。`;
+    log("✅ GGUFロード完了");
+    outputEl.textContent = "✅ Serowロード完了！生成できます。";
     runBtn.disabled = false;
     stopBtn.disabled = false;
-    loadBtn.textContent = "ロード完了 ✅";
+    loadBtn.textContent = "完了 ✅";
   } catch (e) {
     log(`❌ GGUFロード失敗: ${e.message}`);
-    log(e.stack || "");
     outputEl.textContent = `エラー: ${e.message}`;
     loadBtn.disabled = false;
     loadBtn.textContent = "再試行";
   }
 });
 
-function buildPrompt(system, user) {
-  return `<|im_start|>system\n${system}<|im_end|>\n<|im_start|>user\n${user}<|im_end|>\n<|im_start|>assistant\n`;
-}
+function buildPrompt(s,u){ return `<|im_start|>system\n${s}<|im_end|>\n<|im_start|>user\n${u}<|im_end|>\n<|im_start|>assistant\n`; }
 
 runBtn.addEventListener('click', async () => {
-  if (!modelLoaded || !wllama) return;
+  if (!modelLoaded) return;
   abortFlag = false;
-  const userPrompt = promptEl.value.trim();
-  const fullPrompt = buildPrompt("あなたはSerowです。短く話す。", userPrompt);
+  const full = buildPrompt("あなたはSerowです。短く話す。", promptEl.value.trim());
   runBtn.disabled = true;
   outputEl.textContent = "";
-  log(`生成開始: ${userPrompt}`);
+  log("生成開始");
   try {
-    await wllama.createCompletion(fullPrompt, {
+    await wllama.createCompletion(full, {
       nPredict: 400,
       sampling: { temp: 0.4, top_p: 0.8, top_k: 40, penalty_repeat: 1.15 },
-      onNewToken: (token, piece) => {
-        if (abortFlag) return true;
-        if (piece) outputEl.textContent += piece;
-        return false;
-      }
+      onNewToken: (t,p)=>{ if(abortFlag) return true; if(p) outputEl.textContent+=p; return false; }
     });
-    log("生成完了 ✅");
-  } catch (e) {
-    log(`生成エラー: ${e.message}`);
-  } finally {
-    runBtn.disabled = false;
-  }
+    log("生成完了");
+  } catch(e){ log(`生成エラー: ${e.message}`); }
+  finally { runBtn.disabled = false; }
 });
 
-stopBtn.addEventListener('click', () => { abortFlag = true; log("中断"); });
+stopBtn.addEventListener('click', ()=>{ abortFlag=true; log("中断"); });
 
-log("準備完了。Step1のWASMダウンロードボタンを押してください。");
+log("準備完了。①を押してください。もしAdBlockを使っていたらオフにしてください。");
 </script>
 <script>(function(){var loc=location.href.replace(/#.*$/,"");var ATTR_NAMES=["data-product-id","data-productid","data-product_id","product-id","productid","product_id","data-source-entity-id","source-entity-id","source_entity_id","data-product","data-metadata","data-meta"];var DATASET_KEYS=["productId","productid","product_id","sourceEntityId","sourceentityid","source_entity_id","product","metadata","meta"];function readProductId(value){if(typeof value!=="string"||value.length===0)return null;if(/^[0-9]{6,}$/.test(value))return value;var match=value.match(/(?:product(?:_|-)?id|source(?:_|-)?entity(?:_|-)?id)["'=:\s]+([0-9]{6,})/i);return match?match[1]:null}function extractProductId(start){for(var node=start;node&&node!==document.body;node=node.parentElement){for(var i=0;i<ATTR_NAMES.length;i++){var attrValue=node.getAttribute&&node.getAttribute(ATTR_NAMES[i]);var attrProductId=readProductId(attrValue);if(attrProductId)return attrProductId}var dataset=node.dataset||null;if(dataset){for(var j=0;j<DATASET_KEYS.length;j++){var dataValue=dataset[DATASET_KEYS[j]];var dataProductId=readProductId(dataValue);if(dataProductId)return dataProductId}}}return null}function isInlineMediaSlotElement(node){return !!(node&&node.getAttribute&&node.getAttribute("data-clippy-inline-media-slot")!==null)}function findInlineMediaSlot(start){for(var node=start;node&&node!==document.body;node=node.parentElement){if(isInlineMediaSlotElement(node))return node}return null}function readInlineMediaUrl(node){if(!node)return null;return node.getAttribute&&((node.getAttribute("data-clippy-inline-media-url")||node.getAttribute("data-url")||node.getAttribute("data_url")))||node.href||null}function stripHash(url){return String(url).replace(/#.*$/,"")}function urlsMatch(a,b){if(!a||!b)return false;try{return stripHash(new URL(a,loc).href)===stripHash(new URL(b,loc).href)}catch(_){return stripHash(a)===stripHash(b)}}function isFirstPartyReelUrl(value){try{var url=new URL(value,loc);if(url.protocol!=="https:")return false;var host=url.hostname.toLowerCase();var supported=host==="instagram.com"||host.endsWith(".instagram.com")||host==="facebook.com"||host.endsWith(".facebook.com");return supported&&/\/reels?\//i.test(url.pathname)}catch(_){return false}}function isInlineMediaUrlClick(node,href){var slot=findInlineMediaSlot(node);if(!slot)return false;var slotUrl=readInlineMediaUrl(slot);if(slotUrl)return urlsMatch(href,slotUrl);return isFirstPartyReelUrl(href)}function findDataHref(start){for(var node=start;node&&node!==document.body;node=node.parentElement){if(node.getAttribute){var href=node.getAttribute("data-href")||node.getAttribute("data-url");if(href)return{href:href,node:node}}}return null}var nativeOpen=window.open;window.open=function(url){if(parent!==window&&typeof url==="string"&&/^https?:\/\//.test(url)){parent.postMessage({type:"ecto:usercontent-link-click",href:url},"*");return null}return nativeOpen?nativeOpen.apply(window,arguments):null};document.addEventListener("click",function(e){var target=e.target instanceof Element?e.target:null;if(!target)return;if(parent===window)return;var a=target.closest?target.closest("a[href]"):null;if(a&&a.href&&/^https?:\/\//.test(a.href)&&a.href.replace(/#.*$/,"")!==loc){if(isInlineMediaUrlClick(a,a.href))return;var productId=extractProductId(target)||extractProductId(a);if(productId){e.preventDefault();parent.postMessage({type:"ecto-artifact-link-click",productId:productId},"*");return}e.preventDefault();parent.postMessage({type:"ecto:usercontent-link-click",href:a.href},"*");return}var dataHref=findDataHref(target);if(dataHref&&/^https?:\/\//.test(dataHref.href)&&dataHref.href.replace(/#.*$/,"")!==loc){if(isInlineMediaUrlClick(dataHref.node,dataHref.href))return;e.preventDefault();parent.postMessage({type:"ecto:usercontent-link-click",href:dataHref.href},"*")}},true)})();</script><script>(function(){var FOCUS_TYPE="ecto:artifact-focus-request";var CLOSE_TYPE="ecto:artifact-close-request";function focusArtifactDocument(){var body=document.body;if(!body)return;try{window.focus();}catch(e){}if(!body.hasAttribute("tabindex"))body.setAttribute("tabindex","-1");try{body.focus({preventScroll:true});}catch(e){try{body.focus();}catch(e2){}}}window.addEventListener("message",function(event){if(event.source!==window.parent)return;var data=event.data;if(!data||typeof data!=="object"||data.type!==FOCUS_TYPE)return;if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",focusArtifactDocument,{once:true});return;}focusArtifactDocument();});window.addEventListener("keydown",function(event){if(event.key!=="Escape")return;window.setTimeout(function(){if(event.defaultPrevented)return;window.parent.postMessage({type:CLOSE_TYPE},"*");},0);});})();</script></body>
 </html>
