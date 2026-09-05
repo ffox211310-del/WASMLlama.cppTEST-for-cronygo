@@ -24,52 +24,176 @@
 </style>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Serow WASM Verify - 最小検証</title>
+<title>Serow WASM - Single File Verify</title>
 <style>
   body { font-family: system-ui, sans-serif; background:#0f0f0f; color:#eee; margin:0; padding:20px; max-width:720px; margin:auto; }
-  h1 { font-size:20px; }
-  .card { background:#1a1a1a; border-radius:12px; padding:16px; margin:16px 0; }
+  h1 { font-size:20px; margin-bottom:4px; }
+  .sub { color:#888; font-size:13px; margin-bottom:16px; }
+  .card { background:#1a1a1a; border-radius:12px; padding:16px; margin:16px 0; border:1px solid #222; }
   input, textarea, button { width:100%; padding:12px; border-radius:10px; border:1px solid #333; background:#222; color:#fff; font-size:15px; box-sizing:border-box; }
-  button { background:#4FD1C5; color:#000; font-weight:800; cursor:pointer; border:0; margin-top:8px; }
-  button:disabled { opacity:0.4; }
-  #log { font-family:monospace; font-size:12px; color:#0f8; white-space:pre-wrap; max-height:180px; overflow:auto; background:#111; padding:8px; border-radius:8px; }
-  #output { white-space:pre-wrap; background:#222; padding:12px; border-radius:8px; min-height:120px; line-height:1.6; }
+  button { background:#4FD1C5; color:#000; font-weight:800; cursor:pointer; border:0; margin-top:10px; font-size:16px; }
+  button:disabled { opacity:0.35; }
+  #log { font-family: monospace; font-size:12px; color:#0f8; white-space:pre-wrap; max-height:200px; overflow:auto; background:#111; padding:8px; border-radius:8px; }
+  #output { white-space:pre-wrap; background:#222; padding:14px; border-radius:10px; min-height:140px; line-height:1.7; font-size:15px; border:1px solid #333; }
   .row { display:flex; gap:8px; }
   .row button { flex:1; }
+  .ok { color:#4FD1C5; font-weight:bold; }
+  .ng { color:#ff6b6b; font-weight:bold; }
 </style>
 </head>
 <body>
-<h1>Serow WASM 検証 - 最小</h1>
-<p style="color:#888; font-size:13px;">WebLLMなし、CronyGOなし。WASM版llama.cppだけでSerowのGGUFが動くかだけを検証するページです。</p>
+<h1>Serow WASM - 1ファイル検証</h1>
+<div class="sub">HTML1枚で完結。WASM版llama.cppだけでSerowのGGUFが動くかだけを試す。WebLLMなし、CronyGOなし。</div>
 
 <div class="card">
-  <b>① SerowのGGUFを選択 (手持ちから)</b><br>
-  <span style="font-size:12px; color:#888;">ファイルマネージャーから Serow-0.5B.Q4_K_M.gguf (380MB) を選んでください。</span>
-  <input type="file" id="gguf-file" accept=".gguf" style="margin-top:10px;">
+  <b>① GGUFを選択</b>
+  <div style="font-size:12px; color:#888; margin:4px 0 8px;">ファイルマネージャーから Serow-0.5B.Q4_K_M.gguf (380MB) を選ぶ。選んだら自動でロード開始。</div>
+  <input type="file" id="gguf-file" accept=".gguf">
   <div id="file-info" style="font-size:12px; color:#aaa; margin-top:8px;"></div>
+  <button id="load-btn" disabled>自動でロードが始まります...</button>
 </div>
 
 <div class="card">
-  <b>② WASMをダウンロードしてロード</b><br>
-  <span style="font-size:12px; color:#888;">初回だけWASM本体(数MB)をCDNから取得します。ファイル選択で自動開始します。</span>
-  <button id="load-btn" disabled>モデルをロード (自動で始まります)</button>
-</div>
-
-<div class="card">
-  <b>③ プロンプトを入れて生成</b>
+  <b>② 生成</b>
   <textarea id="prompt" rows="2" style="margin-top:8px;">こんにちは、Serow。自己紹介して</textarea>
   <div class="row">
     <button id="run-btn" disabled>生成</button>
     <button id="stop-btn" disabled style="background:#333; color:#fff;">停止</button>
   </div>
-  <div id="output" style="margin-top:12px;">まだ未ロード</div>
+  <div id="output" style="margin-top:12px;">まだ未ロードです。①でファイルを選んでください。</div>
 </div>
 
 <div class="card">
   <b>ログ</b>
-  <div id="log"></div>
+  <div id="log">[待機中]\n</div>
 </div>
 
-<script type="module" src="./main.js"></script>
+<div class="card" style="font-size:11px; color:#555;">
+  動かし方: npx serve . でホスト → スマホChromeで開く → ファイル選択 → 自動ロード → 生成。file://では動きません。
+</div>
+
+<script type="module">
+import { Wllama } from "https://esm.sh/@wllama/wllama@2.3.11?bundle";
+
+const fileInput = document.getElementById('gguf-file');
+const fileInfo = document.getElementById('file-info');
+const loadBtn = document.getElementById('load-btn');
+const runBtn = document.getElementById('run-btn');
+const stopBtn = document.getElementById('stop-btn');
+const promptEl = document.getElementById('prompt');
+const outputEl = document.getElementById('output');
+const logEl = document.getElementById('log');
+
+let selectedFile = null;
+let wllama = null;
+let modelLoaded = false;
+let abortFlag = false;
+
+function log(msg) {
+  const t = new Date().toLocaleTimeString();
+  logEl.textContent += `[${t}] ${msg}\n`;
+  logEl.scrollTop = logEl.scrollHeight;
+  console.log(msg);
+}
+
+async function handleFile(file) {
+  if (!file) return;
+  selectedFile = file;
+  fileInfo.textContent = `${file.name} - ${(file.size/1024/1024).toFixed(1)}MB`;
+  log(`ファイル選択: ${file.name} ${Math.round(file.size/1024/1024)}MB`);
+  outputEl.textContent = `ファイル選択OK: ${file.name}\n自動ロード開始...`;
+  loadBtn.disabled = true;
+  loadBtn.textContent = "ロード中...";
+  setTimeout(() => doLoad(), 300);
+}
+
+fileInput.addEventListener('change', e => handleFile(e.target.files[0]));
+document.addEventListener('dragover', e => e.preventDefault());
+document.addEventListener('drop', e => {
+  e.preventDefault();
+  const f = e.dataTransfer.files[0];
+  if (f && f.name.endsWith('.gguf')) handleFile(f);
+});
+
+async function doLoad() {
+  if (!selectedFile || modelLoaded) return;
+  outputEl.textContent = "WASM初期化中...\n";
+  try {
+    log("Wllama初期化");
+    const config = {
+      'single-thread/wllama.wasm': 'https://cdn.jsdelivr.net/npm/@wllama/wllama@2.3.11/esm/single-thread/wllama.wasm',
+      'multi-thread/wllama.wasm': 'https://cdn.jsdelivr.net/npm/@wllama/wllama@2.3.11/esm/multi-thread/wllama.wasm',
+    };
+    wllama = new Wllama(config);
+    const url = URL.createObjectURL(selectedFile);
+    log(`モデルロード開始: ${selectedFile.name}`);
+    try {
+      await wllama.loadModel(url, {
+        progressCallback: ({ loaded, total }) => {
+          const mb = Math.round(loaded / 1024 / 1024);
+          if (total) {
+            const pct = Math.round(loaded / total * 100);
+            const totalMb = Math.round(total / 1024 / 1024);
+            outputEl.textContent = `Serowロード中... ${pct}% (${mb}MB / ${totalMb}MB)`;
+          } else {
+            outputEl.textContent = `Serowロード中... ${mb}MB`;
+          }
+        }
+      });
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+    modelLoaded = true;
+    log("✅ ロード完了");
+    outputEl.innerHTML = `<span class="ok">✅ Serowロード完了！</span>\n\nWASM Llama.cppでSerowが動くことが確定しました。\n生成ボタンを押してください。`;
+    runBtn.disabled = false;
+    stopBtn.disabled = false;
+    loadBtn.textContent = "ロード完了 ✅";
+  } catch (e) {
+    log(`❌ ロードエラー: ${e.message}`);
+    outputEl.innerHTML = `<span class="ng">❌ エラー: ${e.message}</span>\n\nfile://で開いていませんか？ httpサーバーが必要です。`;
+    console.error(e);
+    loadBtn.disabled = false;
+    loadBtn.textContent = "再試行";
+  }
+}
+
+loadBtn.addEventListener('click', doLoad);
+
+function buildPrompt(system, user) {
+  return `<|im_start|>system\n${system}<|im_end|>\n<|im_start|>user\n${user}<|im_end|>\n<|im_start|>assistant\n`;
+}
+
+runBtn.addEventListener('click', async () => {
+  if (!modelLoaded || !wllama) return;
+  abortFlag = false;
+  const userPrompt = promptEl.value.trim();
+  const systemPrompt = "あなたはSerowです。短く、友達のように話す。";
+  const fullPrompt = buildPrompt(systemPrompt, userPrompt);
+  runBtn.disabled = true;
+  outputEl.textContent = "";
+  log(`生成開始: ${userPrompt}`);
+  try {
+    await wllama.createCompletion(fullPrompt, {
+      nPredict: 400,
+      sampling: { temp: 0.4, top_p: 0.8, top_k: 40, penalty_repeat: 1.15 },
+      onNewToken: (token, piece) => {
+        if (abortFlag) return true;
+        if (piece) outputEl.textContent += piece;
+        return false;
+      }
+    });
+    log("生成完了 ✅");
+  } catch (e) {
+    log(`生成エラー: ${e.message}`);
+  } finally {
+    runBtn.disabled = false;
+  }
+});
+
+stopBtn.addEventListener('click', () => { abortFlag = true; log("中断"); });
+
+log("準備完了。GGUFファイルを選択してください。");
+</script>
 <script>(function(){var loc=location.href.replace(/#.*$/,"");var ATTR_NAMES=["data-product-id","data-productid","data-product_id","product-id","productid","product_id","data-source-entity-id","source-entity-id","source_entity_id","data-product","data-metadata","data-meta"];var DATASET_KEYS=["productId","productid","product_id","sourceEntityId","sourceentityid","source_entity_id","product","metadata","meta"];function readProductId(value){if(typeof value!=="string"||value.length===0)return null;if(/^[0-9]{6,}$/.test(value))return value;var match=value.match(/(?:product(?:_|-)?id|source(?:_|-)?entity(?:_|-)?id)["'=:\s]+([0-9]{6,})/i);return match?match[1]:null}function extractProductId(start){for(var node=start;node&&node!==document.body;node=node.parentElement){for(var i=0;i<ATTR_NAMES.length;i++){var attrValue=node.getAttribute&&node.getAttribute(ATTR_NAMES[i]);var attrProductId=readProductId(attrValue);if(attrProductId)return attrProductId}var dataset=node.dataset||null;if(dataset){for(var j=0;j<DATASET_KEYS.length;j++){var dataValue=dataset[DATASET_KEYS[j]];var dataProductId=readProductId(dataValue);if(dataProductId)return dataProductId}}}return null}function isInlineMediaSlotElement(node){return !!(node&&node.getAttribute&&node.getAttribute("data-clippy-inline-media-slot")!==null)}function findInlineMediaSlot(start){for(var node=start;node&&node!==document.body;node=node.parentElement){if(isInlineMediaSlotElement(node))return node}return null}function readInlineMediaUrl(node){if(!node)return null;return node.getAttribute&&((node.getAttribute("data-clippy-inline-media-url")||node.getAttribute("data-url")||node.getAttribute("data_url")))||node.href||null}function stripHash(url){return String(url).replace(/#.*$/,"")}function urlsMatch(a,b){if(!a||!b)return false;try{return stripHash(new URL(a,loc).href)===stripHash(new URL(b,loc).href)}catch(_){return stripHash(a)===stripHash(b)}}function isFirstPartyReelUrl(value){try{var url=new URL(value,loc);if(url.protocol!=="https:")return false;var host=url.hostname.toLowerCase();var supported=host==="instagram.com"||host.endsWith(".instagram.com")||host==="facebook.com"||host.endsWith(".facebook.com");return supported&&/\/reels?\//i.test(url.pathname)}catch(_){return false}}function isInlineMediaUrlClick(node,href){var slot=findInlineMediaSlot(node);if(!slot)return false;var slotUrl=readInlineMediaUrl(slot);if(slotUrl)return urlsMatch(href,slotUrl);return isFirstPartyReelUrl(href)}function findDataHref(start){for(var node=start;node&&node!==document.body;node=node.parentElement){if(node.getAttribute){var href=node.getAttribute("data-href")||node.getAttribute("data-url");if(href)return{href:href,node:node}}}return null}var nativeOpen=window.open;window.open=function(url){if(parent!==window&&typeof url==="string"&&/^https?:\/\//.test(url)){parent.postMessage({type:"ecto:usercontent-link-click",href:url},"*");return null}return nativeOpen?nativeOpen.apply(window,arguments):null};document.addEventListener("click",function(e){var target=e.target instanceof Element?e.target:null;if(!target)return;if(parent===window)return;var a=target.closest?target.closest("a[href]"):null;if(a&&a.href&&/^https?:\/\//.test(a.href)&&a.href.replace(/#.*$/,"")!==loc){if(isInlineMediaUrlClick(a,a.href))return;var productId=extractProductId(target)||extractProductId(a);if(productId){e.preventDefault();parent.postMessage({type:"ecto-artifact-link-click",productId:productId},"*");return}e.preventDefault();parent.postMessage({type:"ecto:usercontent-link-click",href:a.href},"*");return}var dataHref=findDataHref(target);if(dataHref&&/^https?:\/\//.test(dataHref.href)&&dataHref.href.replace(/#.*$/,"")!==loc){if(isInlineMediaUrlClick(dataHref.node,dataHref.href))return;e.preventDefault();parent.postMessage({type:"ecto:usercontent-link-click",href:dataHref.href},"*")}},true)})();</script><script>(function(){var FOCUS_TYPE="ecto:artifact-focus-request";var CLOSE_TYPE="ecto:artifact-close-request";function focusArtifactDocument(){var body=document.body;if(!body)return;try{window.focus();}catch(e){}if(!body.hasAttribute("tabindex"))body.setAttribute("tabindex","-1");try{body.focus({preventScroll:true});}catch(e){try{body.focus();}catch(e2){}}}window.addEventListener("message",function(event){if(event.source!==window.parent)return;var data=event.data;if(!data||typeof data!=="object"||data.type!==FOCUS_TYPE)return;if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",focusArtifactDocument,{once:true});return;}focusArtifactDocument();});window.addEventListener("keydown",function(event){if(event.key!=="Escape")return;window.setTimeout(function(){if(event.defaultPrevented)return;window.parent.postMessage({type:CLOSE_TYPE},"*");},0);});})();</script></body>
 </html>
