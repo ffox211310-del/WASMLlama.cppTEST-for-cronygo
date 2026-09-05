@@ -1,6 +1,4 @@
-// 最小検証 - WASM Llama.cpp (wllama) だけでSerowを動かす
-// WebLLMなし、CronyGOなし
-
+// 最小検証 - WASM Llama.cpp (wllama) だけでSerowを動かす - 自動ロード版
 import { Wllama } from "https://esm.sh/@wllama/wllama@2.3.11?bundle";
 
 const fileInput = document.getElementById('gguf-file');
@@ -24,18 +22,30 @@ function log(msg) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
+async function handleFileSelect(file) {
+  if (!file) return;
+  selectedFile = file;
+  fileInfo.textContent = `${file.name} - ${(file.size/1024/1024).toFixed(1)}MB`;
+  log(`ファイル選択: ${file.name} ${Math.round(file.size/1024/1024)}MB`);
+  outputEl.textContent = `ファイル選択OK: ${file.name}\n自動でロードを開始します...`;
+  loadBtn.disabled = false;
+  setTimeout(() => autoLoad(), 300);
+}
+
 fileInput.addEventListener('change', (e) => {
   const f = e.target.files[0];
-  if (!f) return;
-  selectedFile = f;
-  fileInfo.textContent = `${f.name} - ${(f.size/1024/1024).toFixed(1)}MB`;
-  log(`ファイル選択: ${f.name} ${Math.round(f.size/1024/1024)}MB`);
-  loadBtn.disabled = false;
-  outputEl.textContent = "ファイル選択OK。ロードボタンを押してください。";
+  handleFileSelect(f);
 });
 
-loadBtn.addEventListener('click', async () => {
-  if (!selectedFile) { alert("先にGGUFファイルを選択してください"); return; }
+document.addEventListener('dragover', (e) => e.preventDefault());
+document.addEventListener('drop', (e) => {
+  e.preventDefault();
+  const f = e.dataTransfer.files[0];
+  if (f && f.name.endsWith('.gguf')) handleFileSelect(f);
+});
+
+async function autoLoad() {
+  if (!selectedFile || modelLoaded) return;
   loadBtn.disabled = true;
   loadBtn.textContent = "ロード中...";
   outputEl.textContent = "WASMとモデルをロード中...\n";
@@ -47,86 +57,70 @@ loadBtn.addEventListener('click', async () => {
       'multi-thread/wllama.wasm': 'https://cdn.jsdelivr.net/npm/@wllama/wllama@2.3.11/esm/multi-thread/wllama.wasm',
     };
     wllama = new Wllama(config);
-
     const url = URL.createObjectURL(selectedFile);
     log(`モデルロード開始: ${selectedFile.name}`);
-
     try {
       await wllama.loadModel(url, {
         progressCallback: ({ loaded, total }) => {
+          const mb = Math.round(loaded / 1024 / 1024);
           if (total) {
             const pct = Math.round(loaded / total * 100);
-            const mb = Math.round(loaded / 1024 / 1024);
             const totalMb = Math.round(total / 1024 / 1024);
             outputEl.textContent = `Serowロード中... ${pct}% (${mb}MB / ${totalMb}MB)\n`;
-            log(`ロード ${pct}% ${mb}MB`);
+          } else {
+            outputEl.textContent = `Serowロード中... ${mb}MB\n`;
           }
         }
       });
     } finally {
       URL.revokeObjectURL(url);
     }
-
     modelLoaded = true;
     log("モデルロード完了！");
-    outputEl.textContent = "✅ Serowロード完了！生成ボタンを押してください。\n\nWASM Llama.cppでSerowが動くことが確定しました。";
+    outputEl.textContent = "✅ Serowロード完了！生成ボタンを押してください。";
     runBtn.disabled = false;
     stopBtn.disabled = false;
-    loadBtn.textContent = "ロード完了";
+    loadBtn.textContent = "ロード完了 ✅";
   } catch (e) {
     log(`ロードエラー: ${e.message}`);
-    outputEl.textContent = `❌ エラー: ${e.message}\n\nログを確認してください。\nfile://で開いていませんか？ httpサーバーが必要です。`;
+    outputEl.textContent = `❌ エラー: ${e.message}\nfile://で開いていませんか？ httpサーバーが必要です。`;
     console.error(e);
     loadBtn.disabled = false;
     loadBtn.textContent = "再試行";
   }
-});
+}
+
+loadBtn.addEventListener('click', () => autoLoad());
 
 function buildPrompt(system, user) {
-  // Qwen2.5 ChatML
   return `<|im_start|>system\n${system}<|im_end|>\n<|im_start|>user\n${user}<|im_end|>\n<|im_start|>assistant\n`;
 }
 
 runBtn.addEventListener('click', async () => {
-  if (!modelLoaded || !wllama) { alert("先にモデルをロードしてください"); return; }
+  if (!modelLoaded || !wllama) return;
   abortFlag = false;
   const userPrompt = promptEl.value.trim();
-  if (!userPrompt) return;
-
-  const systemPrompt = "あなたはSerowです。CronyGO専属の会話AI。短く、友達のように話す。";
+  const systemPrompt = "あなたはSerowです。短く、友達のように話す。";
   const fullPrompt = buildPrompt(systemPrompt, userPrompt);
-
   runBtn.disabled = true;
   outputEl.textContent = "";
   log(`生成開始: ${userPrompt}`);
-
   try {
     await wllama.createCompletion(fullPrompt, {
       nPredict: 400,
-      sampling: {
-        temp: 0.4,
-        top_p: 0.8,
-        top_k: 40,
-        penalty_repeat: 1.15,
-      },
-      onNewToken: (token, piece, text, opts) => {
+      sampling: { temp: 0.4, top_p: 0.8, top_k: 40, penalty_repeat: 1.15 },
+      onNewToken: (token, piece) => {
         if (abortFlag) return true;
-        if (piece) {
-          outputEl.textContent += piece;
-        }
+        if (piece) outputEl.textContent += piece;
         return false;
       }
     });
     log("生成完了");
   } catch (e) {
     log(`生成エラー: ${e.message}`);
-    outputEl.textContent += `\n\n[エラー: ${e.message}]`;
   } finally {
     runBtn.disabled = false;
   }
 });
 
-stopBtn.addEventListener('click', () => {
-  abortFlag = true;
-  log("中断");
-});
+stopBtn.addEventListener('click', () => { abortFlag = true; log("中断"); });
